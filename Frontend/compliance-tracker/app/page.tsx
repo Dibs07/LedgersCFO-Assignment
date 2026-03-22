@@ -1,64 +1,215 @@
-import Image from "next/image";
+
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { ClientList } from "@/components/ClientList";
+import { Filters } from "@/components/Filters";
+import { TaskForm } from "@/components/TaskForm";
+import { TaskList } from "@/components/TaskList";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { getClients } from "@/lib/clientApi";
+import { createTask, getTasks, updateTaskStatus } from "@/lib/taskApi";
+import { Client, CreateTaskInput, Task, TaskFilters } from "@/lib/types";
+
+const defaultFilters: TaskFilters = {
+  status: "all",
+  category: "all",
+};
+
+const isOverdueTask = (task: Task): boolean =>
+  task.status !== "completed" &&
+  new Date(task.due_date).setHours(0, 0, 0, 0) <
+    new Date().setHours(0, 0, 0, 0);
 
 export default function Home() {
+  const [clients, setClients] = useState<Client[]>([]);
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [filters, setFilters] = useState<TaskFilters>(defaultFilters);
+
+  const [isClientsLoading, setIsClientsLoading] = useState(true);
+  const [isTasksLoading, setIsTasksLoading] = useState(false);
+  const [clientsError, setClientsError] = useState<string | null>(null);
+  const [tasksError, setTasksError] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function loadClients() {
+      setIsClientsLoading(true);
+      setClientsError(null);
+
+      try {
+        const fetchedClients = await getClients();
+        setClients(fetchedClients);
+
+        if (fetchedClients.length > 0) {
+          setSelectedClientId(fetchedClients[0].id);
+        }
+      } catch (error) {
+        setClientsError(
+          error instanceof Error ? error.message : "Failed to load clients."
+        );
+      } finally {
+        setIsClientsLoading(false);
+      }
+    }
+
+    void loadClients();
+  }, []);
+
+  useEffect(() => {
+    async function loadTasks(clientId: string) {
+      setIsTasksLoading(true);
+      setTasksError(null);
+
+      try {
+        const fetchedTasks = await getTasks(clientId);
+        setTasks(fetchedTasks);
+      } catch (error) {
+        setTasksError(
+          error instanceof Error ? error.message : "Failed to load tasks."
+        );
+      } finally {
+        setIsTasksLoading(false);
+      }
+    }
+
+    if (!selectedClientId) {
+      setTasks([]);
+      return;
+    }
+
+    void loadTasks(selectedClientId);
+  }, [selectedClientId]);
+
+  const categories = useMemo(
+    () => Array.from(new Set(tasks.map((task) => task.category))).sort(),
+    [tasks]
+  );
+
+  const filteredTasks = useMemo(
+    () =>
+      tasks.filter((task) => {
+        const matchesStatus =
+          filters.status === "all"
+            ? true
+            : filters.status === "completed"
+              ? task.status === "completed"
+              : task.status !== "completed";
+        const matchesCategory =
+          filters.category === "all" ? true : task.category === filters.category;
+
+        return matchesStatus && matchesCategory;
+      }),
+    [tasks, filters]
+  );
+
+  const counts = useMemo(() => {
+    const total = tasks.length;
+    const pending = tasks.filter((task) => task.status !== "completed").length;
+    const overdue = tasks.filter((task) => isOverdueTask(task)).length;
+    return { total, pending, overdue };
+  }, [tasks]);
+
+  async function handleCreateTask(payload: CreateTaskInput) {
+    await createTask(payload);
+    const refreshedTasks = await getTasks(payload.client_id);
+    setTasks(refreshedTasks);
+  }
+
+  async function handleToggleStatus(task: Task) {
+    const nextStatus = task.status === "completed" ? "pending" : "completed";
+
+    // Optimistic update keeps the UI responsive while the API call is in-flight.
+    setTasks((current) =>
+      current.map((existing) =>
+        existing.id === task.id ? { ...existing, status: nextStatus } : existing
+      )
+    );
+
+    try {
+      await updateTaskStatus(task.id, nextStatus);
+    } catch (error) {
+      setTasks((current) =>
+        current.map((existing) =>
+          existing.id === task.id ? { ...existing, status: task.status } : existing
+        )
+      );
+      setTasksError(
+        error instanceof Error ? error.message : "Failed to update task status."
+      );
+    }
+  }
+
+  const selectedClient =
+    clients.find((client) => client.id === selectedClientId) ?? null;
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <div className="min-h-screen bg-zinc-50 text-zinc-900">
+      <main className="mx-auto grid max-w-7xl grid-cols-1 gap-0 p-4 md:grid-cols-[320px_1fr]">
+        <ClientList
+          clients={clients}
+          selectedClientId={selectedClientId}
+          onSelectClient={(client) => {
+            setSelectedClientId(client.id);
+            setFilters(defaultFilters);
+          }}
+          isLoading={isClientsLoading}
+          error={clientsError}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
+
+        <section className="space-y-4 p-4 md:p-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-2xl">Compliance Task Tracker</CardTitle>
+              <CardDescription>
+              {selectedClient
+                ? `Managing tasks for ${selectedClient.company_name} (${selectedClient.country})`
+                : "Select a client to start managing tasks."}
+              </CardDescription>
+            </CardHeader>
+
+            <CardContent>
+              <div className="flex flex-wrap gap-2 text-sm">
+                <Badge variant="secondary">Total: {counts.total}</Badge>
+                <Badge variant="warning">Pending: {counts.pending}</Badge>
+                <Badge variant="destructive">Overdue: {counts.overdue}</Badge>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <CardTitle className="text-lg">Tasks</CardTitle>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <TaskForm
+                    selectedClientId={selectedClientId}
+                    onCreate={handleCreateTask}
+                  />
+
+                  <Filters
+                    filters={filters}
+                    categories={categories}
+                    onChange={setFilters}
+                  />
+                </div>
+              </div>
+            </CardHeader>
+
+            <CardContent>
+              <div className="mt-4">
+                <TaskList
+                  tasks={filteredTasks}
+                  isLoading={isTasksLoading}
+                  error={tasksError}
+                  onToggleStatus={handleToggleStatus}
+                />
+              </div>
+            </CardContent>
+          </Card>
+        </section>
       </main>
     </div>
   );
