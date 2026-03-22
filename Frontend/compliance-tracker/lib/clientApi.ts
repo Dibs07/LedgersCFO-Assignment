@@ -14,6 +14,6 @@ function normalizeClients(payload: unknown): Client[] {
 }
 
 export async function getClients(): Promise<Client[]> {
-  const payload = await requestWithFallback(["/clients", "/api/client/all"]);
+  const payload = await requestWithFallback([ "/api/client/all"]);
   return normalizeClients(payload);
 }
